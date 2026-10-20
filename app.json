@@ -5,7 +5,19 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "scheme": "wisdenpoc",
     "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Kingsmen Cricket uses the camera to record a video.",
+          "microphonePermission": "Kingsmen Cricket uses the microphone so recorded videos have sound.",
+          "photosPermission": "Kingsmen Cricket uses your gallery so you can upload a video."
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": true
     },
