@@ -17,6 +17,8 @@ const s3 = new S3Client({});
 // ffmpeg comes from a Lambda layer. Layers are unpacked into /opt.
 const FFMPEG = "/opt/bin/ffmpeg";
 const SOURCE_PREFIX = "videos/";
+// How much of the video start we try first (about 2-4 seconds of a phone video)
+const PARTIAL_BYTES = 5 * 1024 * 1024;
 const THUMBNAIL_PREFIX = "thumbnails/";
 
 export const handler = async (event) => {
@@ -48,12 +50,35 @@ async function createThumbnail(bucket, key) {
   try {
     await mkdir(workDir, { recursive: true });
 
-    // 1) Download the video from S3 into /tmp
-    const object = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    await pipeline(object.Body, createWriteStream(inputPath));
+    // ---- OLD CODE (downloads the whole video every time). Kept for reference. ----
+    // // 1) Download the video from S3 into /tmp
+    // const object = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    // await pipeline(object.Body, createWriteStream(inputPath));
+    //
+    // // 2) Take one frame with ffmpeg
+    // await extractFrame(inputPath, outputPath);
+    // -------------------------------------------------------------------------
 
-    // 2) Take one frame with ffmpeg
-    await extractFrame(inputPath, outputPath);
+    // ---- NEW CODE ----
+    // 1) + 2) Get one frame from the video.
+    // First try with only the beginning of the file (fast, small download).
+    // This works when the MP4 has its index ("moov") at the start, which is
+    // normal for phone videos. If it does not work, download the whole file.
+    let done = false;
+    try {
+      await download(bucket, key, inputPath, PARTIAL_BYTES);
+      await extractFrame(inputPath, outputPath, [2]);
+      done = true;
+      console.log("Used only the first part of the video");
+    } catch (error) {
+      console.warn("Partial download was not enough, using the whole video", error.message);
+      await rm(outputPath, { force: true });
+    }
+
+    if (!done) {
+      await download(bucket, key, inputPath);
+      await extractFrame(inputPath, outputPath, [2, 0]);
+    }
 
     // 3) Upload the JPEG back to S3
     await s3.send(
@@ -83,10 +108,25 @@ function thumbnailKeyFor(videoKey) {
   return withoutExtension.replace(/^videos\//, THUMBNAIL_PREFIX) + ".jpg";
 }
 
-// Try the 2nd second first. If the video is shorter than that, ffmpeg creates
-// no picture, so we fall back to the very first frame.
-async function extractFrame(inputPath, outputPath) {
-  for (const second of [2, 0]) {
+// Download an object into a local file. S3 can only cut by bytes (not seconds),
+// so "maxBytes" means: give me only the first N bytes of the file.
+// If the file is smaller than N, S3 simply returns the whole file.
+async function download(bucket, key, filePath, maxBytes) {
+  const object = await s3.send(
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Range: maxBytes ? `bytes=0-${maxBytes - 1}` : undefined,
+    }),
+  );
+  await pipeline(object.Body, createWriteStream(filePath));
+}
+
+// Try the given seconds in order. With the whole video we try the 2nd second
+// first and fall back to the very first frame, because ffmpeg creates no picture
+// when the video is shorter than the requested second.
+async function extractFrame(inputPath, outputPath, seconds = [2, 0]) {
+  for (const second of seconds) {
     try {
       await run(
         FFMPEG,
