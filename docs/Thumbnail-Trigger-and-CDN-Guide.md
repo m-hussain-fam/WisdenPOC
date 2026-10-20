@@ -128,6 +128,36 @@ Lambda thumbnail ko `thumbnails/` mein likhta hai. Agar trigger poore bucket par
 
 Plus logs ke liye `AWSLambdaBasicExecutionRole`.
 
+### Lambda ki settings (Configuration tab)
+
+Default settings is kaam ke liye kam parti hain. Lambda, phir **Configuration**, phir **General configuration**, phir **Edit**:
+
+| Setting | Kitni rakhein | Wajah |
+| --- | --- | --- |
+| **Timeout** | **30 se 60 second** | Default 3 second hai. Download aur ffmpeg 3 second mein khatam nahi hote, Lambda beech mein kat jata hai. |
+| **Memory** | **512 MB ya zyada** | ffmpeg ko RAM chahiye. Zyada memory se CPU bhi zyada milta hai, to kaam tez hota hai. |
+| **Ephemeral storage** (`/tmp`) | Default **512 MB** kaafi hai | Ab sirf pehle 5 MB utarte hain (neeche dekho). Poori video par wapas aaye to bhi shorts ke liye theek hai. |
+| **Architecture** | **arm64** | ffmpeg layer arm64 par bana hai. Lambda aur layer ki architecture same honi chahiye. |
+| **Runtime** | Node.js 20.x ya 22.x | Code `.mjs` (ES module) hai. |
+| **Layer** | ffmpeg layer jora hua | `/opt/bin/ffmpeg` is layer se aata hai. |
+
+### Pehle sirf 5 MB download hota hai (Range request)
+
+Code ab poori video download nahi karta. `generateThumbnail.mjs` mein `PARTIAL_BYTES = 5 * 1024 * 1024` hai, aur S3 se `Range: bytes=0-5242879` ke saath sirf **pehle 5 MB** manga jata hai.
+
+```
+1) Pehle 5 MB download  ->  2nd second ka frame nikalo
+2) Agar ye nakam ho (file adhoori hone ki wajah se)  ->  poori video download karo  ->  dobara frame nikalo
+```
+
+Is se ye hota hai:
+- Aksar videos ke liye download kam hota hai, to Lambda tez chalta hai aur S3 se data kam jata hai.
+- Range **bytes** mein hoti hai, seconds mein nahi. 5 MB ki video kitne second ki hogi, ye bitrate par depend karta hai. Phone ki 1080p video mein 5 MB aam taur par pehle 5 se 10 second hote hain.
+- Agar MP4 ka `moov` (metadata) hissa file ke **aakhir mein** ho, to pehle 5 MB se frame nahi niklega. Tab code khud poori video par wapas jata hai, to thumbnail phir bhi ban jata hai.
+- Logs mein dekh sakte ho kaunsa raasta chala: `Used only the first part of the video` ya `Partial download was not enough, using the whole video`.
+
+Purana "poori video download" wala code file mein comment kar ke rakha hai (`OLD CODE`), taake zaroorat par wapas aa sako.
+
 ### Test kaise karein
 
 **1) Lambda console mein hath se (upload ke baghair).** Lambda, phir **Test**, phir yeh event paste karo (apni kisi maujooda video ki key daalo):
@@ -172,7 +202,7 @@ S3 se **EventBridge** ko events bhejna aur wahan se Step Functions chalana zyada
 
 ### Abhi kya hota hai
 
-`generateThumbnail.mjs` abhi **poori video** S3 se `/tmp` mein utaar ta hai, phir ffmpeg frame nikalta hai.
+`generateThumbnail.mjs` pehle **poori video** S3 se `/tmp` mein utaar ta tha. Ab wo pehle sirf **5 MB** utarta hai (Range request, Section 1 mein "Pehle sirf 5 MB download hota hai" dekho) aur nakam hone par hi poori video leta hai. Neeche wala presigned URL method us se bhi aage ka tareeqa hai.
 
 ### Naya tareeqa
 
